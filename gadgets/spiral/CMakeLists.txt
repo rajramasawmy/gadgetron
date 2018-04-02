@@ -7,6 +7,8 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/toolboxes/core/cpu
   ${CMAKE_SOURCE_DIR}/toolboxes/solvers
   ${CMAKE_SOURCE_DIR}/toolboxes/operators
+  ${CMAKE_SOURCE_DIR}/toolboxes/mri_core
+  ${CMAKE_SOURCE_DIR}/toolboxes/core/cpu/math
   )
 
 set(SPIRAL_HEADER_FILES gadgetron_spiral_export.h SpiralToGenericGadget.h vds.h)
@@ -23,8 +25,8 @@ if (CUDA_FOUND)
       ${CUDA_INCLUDE_DIRS}
       )
 
-    set(SPIRAL_HEADER_FILES ${SPIRAL_HEADER_FILES} gpuSpiralSensePrepGadget.h)
-    set(SPIRAL_SRC_FILES ${SPIRAL_SRC_FILES}  gpuSpiralSensePrepGadget.cpp)
+    set(SPIRAL_HEADER_FILES ${SPIRAL_HEADER_FILES} gpuSpiralSensePrepGadget.h gpuSpiralSensePrepGadgetRR.h)
+    set(SPIRAL_SRC_FILES ${SPIRAL_SRC_FILES}  gpuSpiralSensePrepGadget.cpp gpuSpiralSensePrepGadgetRR.cpp)
 endif()
   
 add_library(gadgetron_spiral SHARED ${SPIRAL_HEADER_FILES} ${SPIRAL_SRC_FILES})
