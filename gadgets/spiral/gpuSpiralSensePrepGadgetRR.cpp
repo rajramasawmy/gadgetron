@@ -250,7 +250,7 @@ namespace Gadgetron{
       /*	call c-function here to calculate gradients */
 
       double fov_coeff = fov_;
-      double fov_RR_[] = {fov_coeff, -1*fov_coeff*(1.0 - 1.0*(vds_factor_/100.0))};
+      double fov_RR_[] = {fov_coeff, -1*fov_coeff*(1.0/krmax_)*(1.0 - 1.0*(vds_factor_/100.0))};
       nfov = 2;
       calc_vds(smax_,gmax_,sample_time,sample_time,Nints_,&fov_RR_[0],nfov,krmax_,ngmax,&xgrad,&ygrad,&ngrad);
 
