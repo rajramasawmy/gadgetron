@@ -6,6 +6,7 @@
 #include <vector> //For mask fields
 
 #include <sstream> //For deprecated macros
+#include <mutex>
 
 #define GADGETRON_LOG_MASK_ENVIRONMENT "GADGETRON_LOG_MASK"
 #define GADGETRON_LOG_FILE_ENVIRONMENT "GADGETRON_LOG_FILE"
@@ -46,7 +47,7 @@ namespace Gadgetron
      Logging/Debug messages should be done with the convenience macros:
 
      GDEBUG
-     GDINFO
+     GINFO
      GWARN
      GERROR
      GVERBOSE
@@ -112,6 +113,7 @@ namespace Gadgetron
     static GadgetronLogger* instance_;
     std::vector<bool> level_mask_;
     std::vector<bool> print_mask_;
+    std::mutex m;
   };
 }
 
@@ -210,6 +212,8 @@ namespace Gadgetron
 #define GADGET_DEBUG_CHECK_RETURN(con, value) 
 #define GADGET_DEBUG_CHECK_RETURN_FALSE(con) 
 #endif // GADGET_DEBUG_MODE
+
+
 
 
 #endif //GADGETRON_LOG_H

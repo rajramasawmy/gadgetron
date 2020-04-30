@@ -9,11 +9,13 @@ namespace Gadgetron
 {
 
 /// Initialize Python and NumPy. Called by each PythonFunction constructor
-EXPORTPYTHON int initialize_python(void);
+EXPORTPYTHON void initialize_python(void);
 /// Initialize NumPy
-EXPORTPYTHON int initialize_numpy(void);
+EXPORTPYTHON void initialize_numpy(void);
+/// Finalize Python, Called by user expclictly
+EXPORTPYTHON void finalize_python(void);
 /// Add a path to the PYTHONPATH
-EXPORTPYTHON int add_python_path(const std::string& path);
+EXPORTPYTHON void add_python_path(const std::string& path);
 
 /// Extracts the exception/traceback to build and return a std::string
 EXPORTPYTHON std::string pyerr_to_string(void);
@@ -130,6 +132,35 @@ public:
     }
 };
 
+/// PythonFunction for a single return type, special for bp::object type
+template <>
+class PythonFunction<bp::object> : public PythonFunctionBase
+{
+public:
+    PythonFunction(const std::string& module, const std::string& funcname)
+        : PythonFunctionBase(module, funcname)
+    {
+    }
+
+    template <typename... TS>
+    bp::object operator()(const TS&... args)
+    {
+        // register type converter for each parameter type
+        register_converter<TS...>();
+        GILLock lg; // lock GIL and release at function exit
+        try {
+            bp::object res = fn_(args...);
+            return res;
+        }
+        catch (bp::error_already_set const &) {
+            std::string err = pyerr_to_string();
+            GERROR(err.c_str());
+            throw std::runtime_error(err);
+        }
+    }
+};
+
+
 /// PythonFunction returning nothing
 template <>
 class PythonFunction<>  : public PythonFunctionBase
@@ -156,4 +187,7 @@ public:
 
 }
 
+namespace boost { namespace python {
+    EXPORTPYTHON bool hasattr(object o, const char* name);
+} }
 

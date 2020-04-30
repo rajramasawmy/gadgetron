@@ -48,7 +48,6 @@ int gpuSenseGadget::process_config(ACE_Message_Block* mb) {
     return GADGET_FAIL;
   }
 
-  pass_on_undesired_data_ = pass_on_undesired_data.value();
   set_number_ = setno.value();
   slice_number_ = sliceno.value();
   oversampling_factor_ = oversampling_factor.value();
@@ -62,7 +61,7 @@ int gpuSenseGadget::process_config(ACE_Message_Block* mb) {
     return GADGET_FAIL;
   }
   save_individual_frames_ = save_individual_frames.value();
-
+  return GADGET_OK;
 }
 
 int gpuSenseGadget::put_frames_on_que(int frames,int rotations, GenericReconJob* j, cuNDArray<float_complext>* cgresult,int channels) {
@@ -146,6 +145,7 @@ int gpuSenseGadget::put_frames_on_que(int frames,int rotations, GenericReconJob*
 		}
 
 	}
+	return GADGET_OK;
 
 }
 

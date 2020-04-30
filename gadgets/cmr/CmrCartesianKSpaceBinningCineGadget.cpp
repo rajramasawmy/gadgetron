@@ -201,7 +201,7 @@ namespace Gadgetron {
                 if(this->send_out_raw.value())
                 {
                     if (perform_timing.value()) { gt_timer_.start("CmrCartesianKSpaceBinningCineGadget::send_out_image_array, raw"); }
-                    this->send_out_image_array(recon_bit_->rbit_[e], res_raw_, e, image_series.value() + ((int)e + 1), GADGETRON_IMAGE_REGULAR);
+                    this->send_out_image_array(res_raw_, e, image_series.value() + ((int)e + 1), GADGETRON_IMAGE_REGULAR);
                     if (perform_timing.value()) { gt_timer_.stop(); }
                 }
 
@@ -215,7 +215,7 @@ namespace Gadgetron {
                 }
 
                 if (perform_timing.value()) { gt_timer_.start("CmrCartesianKSpaceBinningCineGadget::send_out_image_array, binning"); }
-                this->send_out_image_array(recon_bit_->rbit_[e], res_binning_, e, image_series.value() + (int)e + 2, GADGETRON_IMAGE_RETRO);
+                this->send_out_image_array(res_binning_, e, image_series.value() + (int)e + 2, GADGETRON_IMAGE_RETRO);
                 if (perform_timing.value()) { gt_timer_.stop(); }
             }
         }
@@ -258,9 +258,20 @@ namespace Gadgetron {
             for (slc=0; slc<SLC; slc++)
             {
                 std::stringstream os;
-                os << "_encoding_" << encoding << "_SLC_" << slc;
 
-                GDEBUG_CONDITION_STREAM(verbose.value(), "Processing binning on SLC : " << slc << " , encoding space : " << encoding);
+                size_t ind = 0;
+                while (recon_bit.data_.headers_[ind].measurement_uid==0 && ind< recon_bit.data_.headers_.get_number_of_elements())
+                {
+                    ind++;
+                }
+
+                size_t curr_slc = recon_bit.data_.headers_[ind].idx.slice;
+
+                os << "_encoding_" << encoding << "_SLC_" << slc << "_SLCOrder_" << curr_slc;
+
+                std::string suffix = os.str();
+
+                GDEBUG_STREAM("Processing binning on SLC : " << slc << " - " << curr_slc << " , encoding space : " << encoding << " " << suffix);
 
                 // set up the binning object
                 binning_reconer_.binning_obj_.data_.create(RO, E1, CHA, N, S, recon_bit.data_.data_.begin()+slc*RO*E1*CHA*N*S);
@@ -273,6 +284,8 @@ namespace Gadgetron {
                                                                 && calib_mode_[encoding]!=ISMRMRD_interleaved 
                                                                 && calib_mode_[encoding]!=ISMRMRD_separate 
                                                                 && calib_mode_[encoding]!=ISMRMRD_noacceleration);
+
+                binning_reconer_.suffix_ = suffix;
 
                 // if (!debug_folder_full_path_.empty()) { gt_exporter_.export_array_complex(binning_reconer_.binning_obj_.data_, debug_folder_full_path_ + "binning_obj_data" + os.str()); }
 
@@ -398,7 +411,7 @@ namespace Gadgetron {
     {
         try
         {
-            BaseClass::prep_image_header_send_out(res, n, s, slc, encoding, series_num, data_role);
+            ImageArraySendMixin::prep_image_header_send_out(res, n, s, slc, encoding, series_num, data_role);
 
             size_t RO = res.data_.get_size(0);
             size_t E1 = res.data_.get_size(1);

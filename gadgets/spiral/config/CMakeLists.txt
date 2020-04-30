@@ -6,9 +6,7 @@ if (CUDA_FOUND)
         spiral_flow_generic_gpusense_cg.xml 
         spiral_flow_generic_gpusense_sb.xml 
         spiral_interactive.xml
-	sf_vds75.xml
-	spiral_cg_vds75.xml
-	spiral_flow_RR.xml
+	deblurring_recon_acctrig.xml
         DESTINATION ${GADGETRON_INSTALL_CONFIG_PATH} COMPONENT main)
     elseif (ARMADILLO_FOUND)
       message("Armadillo not found, only unoptimized spiral config files will be available")

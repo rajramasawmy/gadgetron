@@ -1,454 +1,498 @@
-import subprocess
-import time
+#!/usr/bin/python3
+
+# Mute the h5py import warning. TODO: Remove these lines when possible.
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+import os
+
+# Importing h5py on windows will mess with your environment. When we pass the messed up environment to gadgetron
+# child processes, they won't load properly. We're saving our environment here to spare our children from the
+# crimes of h5py.
+environment = dict(os.environ)
+
 import sys
+import shutil
+
+import argparse
+import configparser
+
+import re
+import time
+import functools
+
+import json
 import h5py
 import numpy
-import ConfigParser
-import os
-import shutil
-import platform
-import re
+import subprocess
+
+default_config_values = {
+    "DEFAULT": {
+        'parameter_xml': 'IsmrmrdParameterMap_Siemens.xml',
+        'parameter_xsl': 'IsmrmrdParameterMap_Siemens.xsl',
+        'dependency_parameter_xml': 'IsmrmrdParameterMap_Siemens.xml',
+        'dependency_parameter_xsl': 'IsmrmrdParameterMap_Siemens.xsl',
+        'input': 'in.h5',
+        'output': 'out.h5',
+        'value_comparison_threshold': '0.01',
+        'scale_comparison_threshold': '0.01',
+        'node_port_base': '9050',
+    }
+}
+
+Passed = "Passed", 0
+Failure = "Failure", 1
+Skipped = "Skipped", 2
 
 
-def run_test(environment, testcase_cfg_file, host, port, start_gadgetron=True):
-    print("Running test case: " + testcase_cfg_file)
+def siemens_to_ismrmrd(echo_handler, *, input, output, parameters, schema, measurement, flag=None):
 
-    pwd = os.getcwd()
-    config = ConfigParser.RawConfigParser()
-    config.read(testcase_cfg_file)
+    command = ["siemens_to_ismrmrd", "-X",
+               "-f", input,
+               "-m", parameters,
+               "-x", schema,
+               "-o", output,
+               "-z", measurement] + ([flag] if flag else [])
 
-    data_folder = 'data'
-    out_folder = 'test'
-    ismrmrd_result = os.path.join(pwd, out_folder, config.get('FILES', 'ismrmrd'))
-    ismrmrd_existing = os.path.join(pwd, data_folder, config.get('FILES', 'ismrmrd'))
-    result_h5 = os.path.join(pwd, out_folder, config.get('FILES', 'result_h5'))
-    reference_h5 = os.path.join(pwd, data_folder, config.get('FILES', 'reference_h5'))
-    need_siemens_conversion = True
-    siemens_dat = ""
+    echo_handler(command)
+    subprocess.run(command,
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT,
+                   check=True)
+
+
+def send_dependency_to_gadgetron(echo_handler, gadgetron, dependency):
+    print("Passing dependency to Gadgetron: {}".format(dependency))
+
+    command = ["gadgetron_ismrmrd_client",
+               "-a", gadgetron.host,
+               "-p", gadgetron.port,
+               "-f", dependency,
+               "-c", "default_measurement_dependencies.xml"]
+
+    echo_handler(command)
+    subprocess.run(command,
+                   env=environment,
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT,
+                   check=True)
+
+
+def send_data_to_gadgetron(echo_handler, gadgetron, *, input, output, configuration):
+    print("Passing data to Gadgetron: {} -> {}".format(input, output))
+
+    command = ["gadgetron_ismrmrd_client",
+               "-a", gadgetron.host,
+               "-p", gadgetron.port,
+               "-f", input,
+               "-o", output,
+               "-c", configuration,
+               "-G", configuration]
+
+    echo_handler(command)
+    subprocess.run(command,
+                   env=environment,
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT,
+                   check=True)
+
+
+def query_gadgetron_instance(echo_handler, gadgetron, query):
+
+    command = ["gadgetron_ismrmrd_client",
+               "-a", gadgetron.host,
+               "-p", gadgetron.port,
+               "-q", "-Q", query]
+
+    echo_handler(command)
+    return subprocess.check_output(command,
+                                   env=environment,
+                                   universal_newlines=True)
+
+
+def start_gadgetron_instance(*, log, port, env=environment):
+    print("Starting Gadgetron instance on port", port)
+    proc = subprocess.Popen(["gadgetron",
+                             "-p", port],
+                            stdout=log,
+                            stderr=log, env=env)
+    time.sleep(2)
+    return proc
+
+
+def prepare_rules(args, requirements):
+
+    class Rule:
+        def __init__(self, query, reason, validate):
+            self.query = query
+            self.reason = reason
+            self.validate = validate
+
+        def accepts(self, gadgetron):
+            try:
+                return self.validate(query_gadgetron_instance(args.echo_handler, gadgetron, self.query).strip())
+            except:
+                return False
+
+    def is_enabled(value):
+        return value in ['YES', 'yes', 'True', 'true', '1']
+
+    def as_list(value, func=float):
+        return [func(val) for val in value.split(';')]
+
+    rules = {
+        'system_memory': lambda req: Rule('gadgetron::info::memory', "Insufficient system memory.",
+                                          lambda val: float(req) <= float(val)),
+        'python_support': lambda req: Rule('gadgetron::info::python', "Python support required.", is_enabled),
+        'matlab_support': lambda req: Rule('gadgetron::info::matlab', "MATLAB support required.", is_enabled),
+        'gpu_support': lambda req: Rule('gadgetron::info::cuda', "CUDA support required.", is_enabled),
+        'gpu_memory': lambda req: Rule('gadgetron::cuda::memory', "Insufficient GPU memory.",
+                                       lambda val: float(req) <= min(as_list(val)))
+    }
+
+    return [rules.get(rule)(requirement) for rule, requirement in requirements if rule in rules]
+
+
+def validate_output(*, output_file, reference_file, output_dataset, reference_dataset,
+                    value_threshold, scale_threshold):
     try:
-        siemens_dat = os.path.join(pwd, data_folder, config.get('FILES', 'siemens_dat'))
-        siemens_parameter_xml = config.get('FILES', 'siemens_parameter_xml')
-        siemens_parameter_xsl = config.get('FILES', 'siemens_parameter_xsl')
-        siemens_dependency_measurement1 = config.getint('FILES', 'siemens_dependency_measurement1')
-        siemens_dependency_measurement2 = config.getint('FILES', 'siemens_dependency_measurement2')
-        siemens_dependency_measurement3 = config.getint('FILES', 'siemens_dependency_measurement3')
-        siemens_dependency_parameter_xml = config.get('FILES', 'siemens_dependency_parameter_xml')
-        siemens_dependency_parameter_xsl = config.get('FILES', 'siemens_dependency_parameter_xsl')
-        siemens_data_measurement = config.getint('FILES', 'siemens_data_measurement')
-    except ConfigParser.NoOptionError:
-        print("Missing siemens configuration parameter(s), assuming no conversion to ISMRMRD needed")
-        need_siemens_conversion = False
+        output = numpy.squeeze(h5py.File(output_file)[output_dataset])
+    except KeyError:
+        return Failure, "Missing output data: {}".format(output_dataset)
 
-    need_siemens_conversion_flag = True
     try:
-        siemens_data_conversion_flag = config.get('FILES', 'siemens_data_conversion_flag')
-    except ConfigParser.NoOptionError:
-        need_siemens_conversion_flag = False
+        reference = numpy.squeeze(h5py.File(reference_file)[reference_dataset])
+    except KeyError:
+        return Failure, "Missing reference data"
 
-    # if siemens_dat config parameter found but empty, assume no conversion to ISMRMRD intended
-    if not siemens_dat:
-        need_siemens_conversion = False
+    if not output.shape == reference.shape:
+        return Failure, "Data dimensions do not match: {} != {}".format(output.shape, reference.shape)
 
-    gadgetron_log_filename = os.path.join(pwd, out_folder, "gadgetron.log")
-    client_log_filename = os.path.join(pwd, out_folder, "client.log")
+    output = output[...].flatten().astype('float32')
+    reference = reference[...].flatten().astype('float32')
 
-    gadgetron_configuration = config.get('TEST', 'gadgetron_configuration')
-    reference_dataset = config.get('TEST', 'reference_dataset')
-    result_dataset = config.get('TEST', 'result_dataset')
-    compare_dimensions = config.getboolean('TEST', 'compare_dimensions')
-    compare_values = config.getboolean('TEST', 'compare_values')
-    compare_scales = config.getboolean('TEST', 'compare_scales')
-    comparison_threshold_values = config.getfloat('TEST', 'comparison_threshold_values')
-    comparison_threshold_scales = config.getfloat('TEST', 'comparison_threshold_scales')
+    norm_diff = numpy.linalg.norm(output - reference) / numpy.linalg.norm(reference)
+    scale = numpy.dot(output, output) / numpy.dot(output, reference)
 
-    dependency_1 = os.path.join(pwd, out_folder, "dependency_1.h5")
-    dependency_2 = os.path.join(pwd, out_folder, "dependency_2.h5")
-    dependency_3 = os.path.join(pwd, out_folder, "dependency_3.h5")
+    if value_threshold < norm_diff:
+        return Failure, "Comparing values, norm diff: {} (threshold: {})".format(norm_diff, value_threshold)
 
-    if config.has_option('REQUIREMENTS', 'python_support'):
-        need_python_support = config.getboolean('REQUIREMENTS', 'python_support')
+    if value_threshold < abs(1 - scale):
+        return Failure, "Comparing image scales, ratio: {} ({}) (threshold: {})".format(scale, abs(1 - scale),
+                                                                                        scale_threshold)
+
+    return None, "Norm: {:.1e} [{}] Scale: {:.1e} [{}]".format(norm_diff, value_threshold, abs(1 - scale),
+                                                               scale_threshold)
+
+
+def error_handlers(args, config):
+    def handle_subprocess_errors(cont, **state):
+        try:
+            return cont(**state)
+        except subprocess.CalledProcessError as e:
+            print("An error occurred in a subprocess with the following command:")
+            print(' '.join(e.cmd))
+            return Failure
+
+    yield handle_subprocess_errors
+
+
+def clear_test_folder(args, config):
+    def clear_test_folder_action(cont, **state):
+        if os.path.exists(args.test_folder):
+            shutil.rmtree(args.test_folder)
+        os.makedirs(args.test_folder, exist_ok=True)
+
+        return cont(**state)
+
+    yield clear_test_folder_action
+
+
+def ensure_gadgetron_instance(args, config):
+    class Gadgetron:
+        def __init__(self, **kwargs):
+            self.__dict__.update(**kwargs)
+
+    gadgetron = Gadgetron(host=str(args.host), port=str(args.port))
+
+    def start_gadgetron_action(cont, *, env=environment, **state):
+        with open(os.path.join(args.test_folder, 'gadgetron.log'), 'w') as log:
+            with start_gadgetron_instance(log=log, port=gadgetron.port, env=env) as instance:
+                try:
+                    return cont(gadgetron=gadgetron, **state)
+                finally:
+                    instance.kill()
+
+    def use_external_gadgetron_action(cont, **state):
+        return cont(gadgetron=gadgetron, **state)
+
+    if args.external:
+        yield use_external_gadgetron_action
     else:
-        need_python_support = False
+        yield start_gadgetron_action
 
-    if config.has_option('REQUIREMENTS', 'matlab_support'):
-        need_matlab_support = config.getboolean('REQUIREMENTS', 'matlab_support')
-    else:
-        need_matlab_support = False
 
-    if config.has_option('REQUIREMENTS', 'gpu_support'):
-        need_gpu_support = config.getboolean('REQUIREMENTS', 'gpu_support')
-    else:
-        need_gpu_support = False
+def ensure_instance_satisfies_requirements(args, config):
+    if args.force:
+        return
 
-    if config.has_option('REQUIREMENTS', 'gpu_memory'):
-        need_gpu_memory = config.getfloat('REQUIREMENTS', 'gpu_memory')
-    else:
-        need_gpu_memory = 256
+    def action(cont, *, gadgetron, **state):
 
-    if config.has_option('REQUIREMENTS', 'system_memory'):
-        need_system_memory = config.getfloat('REQUIREMENTS', 'system_memory')
-    else:
-        need_system_memory = 1024
+        failed_rules = [rule for rule in prepare_rules(args, config.items('REQUIREMENTS'))
+                        if not rule.accepts(gadgetron)]
 
-    if config.has_option('REQUIREMENTS', 'nodes'):
-        nodes = config.getint('REQUIREMENTS', 'nodes')
-    else:
-        nodes = 0
+        if failed_rules:
+            for rule in failed_rules:
+                print("Skipping test case: {}".format(rule.reason))
+            return Skipped
 
-    if need_siemens_conversion:
-        if not os.path.isfile(siemens_dat):
-            print("Can't find Siemens file %s" % siemens_dat)
-            return False
-    else:
-        if not os.path.isfile(ismrmrd_existing):
-            print("Can't find ISMRMRD file %s" % ismrmrd_existing)
-            return False
+        return cont(gadgetron=gadgetron, **state)
 
-    if not os.path.isfile(reference_h5):
-        print("Can't find reference HDF5 file %s" % reference_h5)
-        return False
+    yield action
 
-    if os.path.exists(out_folder):
-        shutil.rmtree(out_folder)
 
-    os.makedirs(out_folder)
+def prepare_copy_input_data(args, config):
+    if not config.has_section('COPY'):
+        return
 
-    #Start the Gadgetron if needed
-    if start_gadgetron:
-        with open(gadgetron_log_filename, "w") as gf:
-            gp = subprocess.Popen(["gadgetron", "-p", port, "-R", "19080", "-l", "8004"], env=environment, stdout=gf, stderr=gf)
+    destination_file = os.path.join(args.test_folder, config['CLIENT']['input'])
 
-            node_p = list()
-            if nodes > 0:
-                #start the cloudbus relay
-                relay_log_filename = os.path.join(pwd, out_folder, "gadgetron_cloudbus_relay.log")
-                with open(relay_log_filename, "w") as lgf:
-                    p_relay = subprocess.Popen(["gadgetron_cloudbus_relay", "8004", "18004"], env=environment, stdout=lgf, stderr=lgf)
+    def copy_prepared_data_action(cont, **state):
+        source_file = os.path.join(args.data_folder, config['COPY']['source'])
 
-                base_rest_port = 19080
-                for pi in range(nodes):
-                    node_log_filename = "gadgetron_node_" + str(pi) + ".log"
-                    node_log_filename = os.path.join(pwd, out_folder, node_log_filename)
+        print("Copying prepared ismrmrd data: {} -> {}".format(source_file, destination_file))
+        shutil.copyfile(source_file, destination_file)
 
-                    with open(node_log_filename, "w") as ngf:
-                        pn = subprocess.Popen(["gadgetron", "-p", str(int(port)+pi+1), "-R", str(base_rest_port+pi+1), "-l", "8004"], env=environment, stdout=ngf, stderr=ngf)
-                        node_p.append(pn)
+        return cont(client_input=destination_file, **state)
 
-            time.sleep(2)
+    yield copy_prepared_data_action
 
-    #Let's figure out if we should run this test or not
-    info = subprocess.check_output(["gadgetron_ismrmrd_client", "-a", host, "-p", port, "-q", "-c", "gadgetron_info.xml"], env=environment);
 
-    has_python_support = False
-    has_cuda_support = False
-    has_matlab_support = False
-    system_memory = 1024  # MB
-    number_of_gpus = 0
-    gpu_memory = 256  # MB
+def prepare_siemens_input_data(args, config):
+    if not config.has_section('SIEMENS'):
+        return
 
-    p = re.compile('^[ \w]+-- Python Support     : ([A-Z]+)', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        if m.group(1) == 'YES':
-            has_python_support = True
+    destination_file = os.path.join(args.test_folder, config['CLIENT']['input'])
 
-    p = re.compile('^[ \w]+-- Matlab Support     : ([A-Z]+)', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        if m.group(1) == 'YES':
-            has_matlab_support = True
+    def convert_siemens_data_action(cont, **state):
+        source_file = os.path.join(args.data_folder, config['SIEMENS']['data_file'])
 
-    p = re.compile('^[ \w]+-- CUDA Support[ ]+: ([A-Z]+)', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        if m.group(1) == 'YES':
-            has_cuda_support = True
+        print("Converting Siemens data: {} -> {}".format(source_file, destination_file))
 
-    p = re.compile('^[ \w]+\* Number of CUDA capable devices: ([0-9]+)', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        number_of_gpus = m.group(1)
+        siemens_to_ismrmrd(args.echo_handler,
+                           input=source_file,
+                           output=destination_file,
+                           parameters=config['SIEMENS']['parameter_xml'],
+                           schema=config['SIEMENS']['parameter_xsl'],
+                           measurement=config['SIEMENS']['data_measurement'],
+                           flag=config['SIEMENS'].get('data_conversion_flag', None))
 
-    p = re.compile('^[ \w]+-- System Memory size : ([0-9\.]+) MB', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        system_memory = float(m.group(1))
+        return cont(client_input=destination_file, siemens_source=source_file, **state)
 
-    p = re.compile('^[ \w]+\+ Total amount of global GPU memory: ([0-9\.]+) MB', re.MULTILINE)
-    m = p.search(info)
-    if m:
-        gpu_memory = float(m.group(1))
-    else:
-        gpu_memory = 0
-        has_cuda_support = False
-        number_of_gpus = 0
+    def convert_siemens_dependency_action(dependency, measurement, cont, *, siemens_source, dependencies=[], **state):
+        destination_file = os.path.join(args.test_folder, "{}.h5".format(dependency))
+        print("Converting Siemens dependency measurement: {} {} -> {}".format(dependency, measurement, destination_file))
 
-    skipping_test = False
+        siemens_to_ismrmrd(args.echo_handler,
+                           input=siemens_source,
+                           output=destination_file,
+                           parameters=config['SIEMENS']['dependency_parameter_xml'],
+                           schema=config['SIEMENS']['dependency_parameter_xsl'],
+                           measurement=measurement)
 
-    if (need_system_memory > system_memory):
-        print("Test skipped because needed system memory (" + str(need_system_memory) + " MB) is larger than available system memory (" + str(system_memory) + " MB)")
-        skipping_test = True
+        return cont(dependencies=dependencies + [destination_file], **state)
 
-    if (need_gpu_support and ((not has_cuda_support) or (number_of_gpus == 0) or (need_gpu_memory > gpu_memory))):
-        print("Test skipped because system does not meet gpu requirements")
-        skipping_test = True  # It is not a failed test, just skipping
+    yield convert_siemens_data_action
 
-    if (need_python_support and (not has_python_support)):
-        print("Test skipped because Python is not available")
-        skipping_test = True
-    if (need_matlab_support and (not has_matlab_support)):
-        print("Test skipped because Matlab is not available")
-        skipping_test = True
+    pattern = re.compile(r"dependency_measurement(.*)")
 
-    if skipping_test:
-        print("System Requirements: Actual/Required")
-        print("System Memory: " + str(system_memory) + "/" + str(need_system_memory))
-        print("Python Support: " + str(has_python_support) + "/" + str(need_python_support))
-        print("Matlab Support: " + str(has_matlab_support) + "/" + str(need_matlab_support))
-        print("CUDA Support: " + str(has_cuda_support and (number_of_gpus > 0)) + "/" + str(need_gpu_support))
-        print("GPU Memory: " + str(gpu_memory) + "/" + str(need_gpu_memory))
+    yield from (functools.partial(convert_siemens_dependency_action, dep, meas)
+                for dep, meas in config.items('SIEMENS')
+                if re.match(pattern, dep))
 
-        f = open(gadgetron_log_filename, "w")
-        f.write("Test skipped because requirements not met\n")
-        f.close()
 
-        f = open(client_log_filename, "w")
-        f.write("Test skipped because requirements not met\n")
-        f.close()
+def start_additional_nodes(args, config):
 
-        if start_gadgetron:
-            gp.terminate()
-            if nodes > 0:
-                p_relay.terminate()
-                for pi in node_p:
-                    pi.terminate()
+    if args.external:
+        return
 
-        return True
+    if not config.has_section('DISTRIBUTED'):
+        return
 
-    success = True
-
-    with open(client_log_filename, "w") as cf:
-        if need_siemens_conversion:
-
-            def convert_siemens_dependency(dependency, measurement, descr):
-                """Helper function for converting and reconstruction Siemens dependency measurements."""
-                success = True
-                print("Converting Siemens .dat file to ISMRMRD for the first dependency measurement.")
-                r = subprocess.call(["siemens_to_ismrmrd", "-X","-f", siemens_dat, "-m",
-                                     siemens_dependency_parameter_xml, "-x", siemens_dependency_parameter_xsl, "-o",
-                                     dependency, "-z", str(measurement + 1)],
-                                    env=environment, stdout=cf, stderr=cf)
-                if r != 0:
-                    print("Failed to run siemens_to_ismrmrd for the %s dependency measurement!" % descr)
-                    success = False
-
-                print("Running Gadgetron recon on the %s dependency measurement" % descr)
-                r = 0
-                r = subprocess.call(["gadgetron_ismrmrd_client", "-a", host, "-p", port, "-f", dependency, "-c",
-                                     "default_measurement_dependencies.xml"],
-                                    env=environment, stdout=cf, stderr=cf)
-                if r != 0:
-                    print("Failed to run gadgetron_ismrmrd_client on the %s dependency measurement!" % descr)
-                    success = False
-                return success
-
-            # if there are dependencies
-            if siemens_data_measurement > 0:
-                if siemens_dependency_measurement1 >= 0:
-                    success = convert_siemens_dependency(dependency_1, siemens_dependency_measurement1, "first")
-                if siemens_dependency_measurement2 >= 0:
-                    success = convert_siemens_dependency(dependency_2, siemens_dependency_measurement2, "second")
-                if siemens_dependency_measurement3 >= 0:
-                    success = convert_siemens_dependency(dependency_3, siemens_dependency_measurement3, "third")
-
-            # conversion of primary Siemens .dat file
-            print("Converting Siemens .dat file to ISMRMRD for data measurement.")
-            if need_siemens_conversion_flag:
-                cmd = ["siemens_to_ismrmrd", "-X", "-f", siemens_dat, "-m",
-                       siemens_parameter_xml, "-x", siemens_parameter_xsl,
-                       "-o", ismrmrd_result, "-z", str(siemens_data_measurement+1), " ", siemens_data_conversion_flag]
-            else:
-                cmd = ["siemens_to_ismrmrd", "-X", "-f", siemens_dat, "-m",
-                       siemens_parameter_xml, "-x", siemens_parameter_xsl,
-                       "-o", ismrmrd_result, "-z", str(siemens_data_measurement+1)]
-
-            r = subprocess.call(cmd, env=environment, stdout=cf, stderr=cf)
-            if r != 0:
-                print("Failed to run siemens_to_ismrmrd!")
-                success = False
+    def set_distributed_environment_action(cont, *, worker_list=[], env=dict(environment), **state):
+        if sys.platform.startswith('win32'):
+            env['GADGETRON_REMOTE_WORKER_COMMAND'] = 'cmd /k echo ' + json.dumps(worker_list) + ' & exit'
         else:
-            # copy existing ISMRMRD dataset to 'out_folder'
-            # this guarantees that the test dataset can't be modified by a test
-            dirname = os.path.dirname(ismrmrd_result)
-            if not os.path.isdir(dirname):
-                os.makedirs(dirname)
-            shutil.copyfile(ismrmrd_existing, ismrmrd_result)
+            env["GADGETRON_REMOTE_WORKER_COMMAND"] = "echo " + json.dumps(worker_list)
 
-        print("Running Gadgetron recon on data measurement")
-        r = 0
+        print("Setting env to",env["GADGETRON_REMOTE_WORKER_COMMAND"])
+        return cont(env=env, **state)
+
+    base_port = int(config['DISTRIBUTED']['node_port_base'])
+    number_of_nodes = int(config['DISTRIBUTED']['nodes'])
+
+    def create_worker_ports_action(ids, cont, **state):
+        print("Will start additional Gadgetron workers on ports:", *map(lambda id: base_port + id, ids))
+        return cont(**state)
+
+    def start_additional_worker_action(port, cont, *, worker_list=[], **state):
+        with open(os.path.join(args.test_folder, 'gadgetron_worker' + port + '.log'), 'w') as log:
+            with start_gadgetron_instance(log=log, port=port) as instance:
+                try:
+                    return cont(worker_list=worker_list + ['localhost:' + port], **state)
+                finally:
+                    instance.kill()
+
+    yield functools.partial(create_worker_ports_action, range(number_of_nodes))
+
+    yield from (functools.partial(start_additional_worker_action, str(base_port + id))
+                for id in range(number_of_nodes))
+
+    yield set_distributed_environment_action
+
+
+def run_gadgetron_client(args, config):
+    output_file = os.path.join(args.test_folder, config['CLIENT']['output'])
+
+    def send_dependencies_action(cont, *, gadgetron, dependencies=[], **state):
+        for dependency in dependencies:
+            send_dependency_to_gadgetron(args.echo_handler, gadgetron, dependency)
+
+        return cont(gadgetron=gadgetron, dependencies=dependencies, **state)
+
+    def send_data_action(cont, *, gadgetron, client_input, **state):
         start_time = time.time()
-        r = subprocess.call(["gadgetron_ismrmrd_client", "-a", host, "-p", port, "-f" , ismrmrd_result, "-c",
-                             gadgetron_configuration, "-G", gadgetron_configuration, "-o", result_h5],
-                            env=environment, stdout=cf, stderr=cf)
-        print("Elapsed time: " + str(time.time()-start_time))
-        if r != 0:
-            print("Failed to run gadgetron_ismrmrd_client!")
-            success = False
+        send_data_to_gadgetron(args.echo_handler,
+                               gadgetron,
+                               input=client_input,
+                               output=output_file,
+                               configuration=config['CLIENT']['configuration'])
+        end_time = time.time()
 
-    if start_gadgetron:
-        gp.terminate()
-        if nodes > 0:
-            p_relay.terminate()
-            for pi in node_p:
-                pi.terminate()
+        processing_time = end_time - start_time
 
-    if not success:
-        return False
+        print("Gadgetron processing time: {:.2f} s".format(processing_time))
 
-    print("Comparing results")
+        return cont(gadgetron=gadgetron,
+                    processing_time=processing_time,
+                    client_input=client_input,
+                    client_output=output_file,
+                    **state)
 
-    f1 = h5py.File(result_h5)
-    f2 = h5py.File(reference_h5)
-    d1 = f1[result_dataset]
-    d2 = f2[reference_dataset]
+    yield send_dependencies_action
+    yield send_data_action
 
-    # The shape stored by the 1.0 API is always N x Nchan x Nz x Ny x Nx
-    # Prior to 1.0, if a dimension was a singleton, it could be missing
-    # h5py returns a fixed tuple for an array shape
-    # this bit turns it into a list and removes the singletons
-    # TODO: fix the shapes in the reference data
-    # shapes_match = (d1.shape == d2.shape)
-    a1 = numpy.asarray(d1.shape)
-    a1 = a1.tolist()
-    while a1.count(1) > 0:
-        a1.remove(1)
-    a2 = numpy.asarray(d2.shape)
-    a2 = a2.tolist()
-    while a2.count(1) > 0:
-        a2.remove(1)
-    print " Shape 1: " + str(d1.shape) + "  numpy: " + str(a1)
-    print " Shape 2: " + str(d2.shape) + "  numpy: " + str(a2)
-    print " Compare dimensions: " + str(compare_dimensions)
-    shapes_match = (a1 == a2)
 
-    # If the types in the hdf5 are unsigned short numpy produces norms, dot products etc. in unsigned short. And that _will_ overflow...
-    norm_diff = (numpy.linalg.norm(d1[...].flatten().astype('float32') -
-                 d2[...].flatten().astype('float32')) /
-                 numpy.linalg.norm(d2[...].flatten().astype('float32')))
+def validate_client_output(args, config):
+    pattern = re.compile(r"TEST(.*)")
 
-    scale = (float(numpy.dot(d1[...].flatten().astype('float32'),
-             d1[...].flatten().astype('float32'))) /
-             float(numpy.dot(d1[...].flatten().astype('float32'),
-             d2[...].flatten().astype('float32'))))
+    def validate_output_action(section, cont, *, client_output, **state):
 
-    result = True
+        reference_file = os.path.join(args.data_folder, config[section]['reference_file'])
+        result, reason = validate_output(output_file=client_output,
+                                         reference_file=reference_file,
+                                         output_dataset=config[section]['output_dataset'],
+                                         reference_dataset=config[section]['reference_dataset'],
+                                         value_threshold=float(config[section]['value_comparison_threshold']),
+                                         scale_threshold=float(config[section]['scale_comparison_threshold']))
 
-    if compare_dimensions:
-        print("   --Comparing dimensions: " + str(shapes_match))
-        result = result and shapes_match
+        if result is not None:
+            print("{:<26} [FAILED] ({})".format(section, reason))
+            return result
+        else:
+            print("{:<26} [OK] ({})".format(section, reason))
+            return cont(client_output=client_output, **state)
 
-    if compare_values:
-        print("   --Comparing values, norm diff : %s (threshold: %s)" %
-              (str(norm_diff), str(comparison_threshold_values)))
-        result = result and (norm_diff < comparison_threshold_values)
+    yield from (functools.partial(validate_output_action, test)
+                for test in filter(lambda s: re.match(pattern, s), config.sections()))
 
-    if compare_scales:
-        print("   --Comparing image scales, ratio : %s (%s) (threshold: %s)" %
-              (str(scale), str(abs(1-scale)), str(comparison_threshold_scales)))
-        result = result and (abs(1-scale) < comparison_threshold_scales)
 
-    return result
+def output_stats(args, config):
+    def output_stats_action(cont, **state):
+        stats = {
+            'test': state.get('test'),
+            'processing_time': state.get('processing_time')
+        }
+
+        with open(os.path.join(args.test_folder, 'stats.json'), 'w') as f:
+            json.dump(stats, f)
+
+        return cont(**state)
+
+    yield output_stats_action
+
+
+def build_actions(args, config):
+    yield from error_handlers(args, config)
+    yield from clear_test_folder(args, config)
+    yield from start_additional_nodes(args, config)
+    yield from ensure_gadgetron_instance(args, config)
+    yield from ensure_instance_satisfies_requirements(args, config)
+    yield from prepare_copy_input_data(args, config)
+    yield from prepare_siemens_input_data(args, config)
+    yield from run_gadgetron_client(args, config)
+    yield from validate_client_output(args, config)
+    yield from output_stats(args, config)
+
+
+def chain_actions(actions):
+    try:
+        action = next(actions)
+        return lambda **state: action(chain_actions(actions), **state)
+    except StopIteration:
+        return lambda **state: Passed
 
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser(description="Gadgetron Integration Test",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-G', '--gadgetron_home', default=os.environ.get('GADGETRON_HOME'), help="Gadgetron installation home")
-    parser.add_argument('-I', '--ismrmrd_home', default=os.environ.get('ISMRMRD_HOME'), help="ISMRMRD installation home")
-    parser.add_argument('-p', '--port', type=int, default=9003, help="Port of gadgetron instance")
-    parser.add_argument('-e', '--external', action='store_true', help="External, do not start gadgetron")
-    parser.add_argument('-a', '--address', default="localhost", help="Address of gadgetron host (external)")
-    parser.add_argument('case_file', help="Test case file")
+
+    parser.add_argument('-G', '--gadgetron-home',
+                        default=os.environ.get('GADGETRON_HOME'),
+                        help="Gadgetron installation home")
+    parser.add_argument('-I', '--ismrmrd-home',
+                        default=os.environ.get('ISMRMRD_HOME'),
+                        help="ISMRMRD installation home")
+
+    parser.add_argument('-p', '--port', type=int, default=9003, help="Port used by Gadgetron")
+    parser.add_argument('-a', '--host', type=str, default="localhost", help="Address of (external) Gadgetron host")
+
+    parser.add_argument('-e', '--external', action='store_true', default=False,
+                        help="External, do not start Gadgetron")
+
+    parser.add_argument('-d', '--data-folder',
+                        type=str, default='data',
+                        help="Look for test data in the specified folder")
+    parser.add_argument('-t', '--test-folder',
+                        type=str, default='test',
+                        help="Save Gadgetron and Client output and logs to specified folder")
+
+    parser.add_argument('--force', action='store_true', default=False,
+                        help="Do not query Gadgetron capabilities; just run the test.")
+
+    parser.add_argument('--echo-commands', dest='echo_handler', action='store_const',
+                        const=lambda cmd: print(' '.join(cmd)), default=lambda *_: None,
+                        help="Echo the commands issued while running the test.")
+
+    parser.add_argument('test', help="Test case file")
+
     args = parser.parse_args()
 
-    port = str(args.port)
-    myenv = dict()
-    host = str(args.address)
+    print("Running Gadgetron test {} with:".format(args.test))
+    print("  -- ISMRMRD_HOME    : {}".format(args.ismrmrd_home))
+    print("  -- GADGETRON_HOME  : {}".format(args.gadgetron_home))
+    print("  -- TEST CASE       : {}".format(args.test))
 
-    myenv["ISMRMRD_HOME"] = os.path.realpath(args.ismrmrd_home)
-    myenv["GADGETRON_HOME"] = os.path.realpath(args.gadgetron_home)
-    myenv["PYTHONPATH"] = os.environ.get("PYTHONPATH", "")
-    test_case = args.case_file
+    config_parser = configparser.ConfigParser()
+    config_parser.read_dict(default_config_values)
+    config_parser.read(args.test)
 
-    libpath = "LD_LIBRARY_PATH"
-    if platform.system() == "Darwin":
-        libpath = "DYLD_FALLBACK_LIBRARY_PATH"
+    action_chain = chain_actions(build_actions(args, config_parser))
+    result, return_code = action_chain(test=args.test)
 
-    if platform.system() == "Windows":
-        myenv["SystemRoot"] = os.environ.get('SystemRoot', "")
-        myenv["PATH"] = os.environ.get('Path', "")
-        myenv["PATH"] += myenv["ISMRMRD_HOME"] + "/lib;"
-        myenv["PATH"] += myenv["ISMRMRD_HOME"] + "/bin;"
-        myenv["PATH"] += myenv["GADGETRON_HOME"] + "/lib;"
-        myenv["PATH"] += myenv["GADGETRON_HOME"] + "/bin;"
-        myenv[libpath] = ""
-    else:
-        myenv[libpath] = myenv["ISMRMRD_HOME"] + "/lib:"
-        myenv[libpath] += myenv["GADGETRON_HOME"] + "/lib:"
-        myenv[libpath] += myenv["GADGETRON_HOME"] + "/../arma/lib:"
+    print("Test status: {}".format(result))
+    return return_code
 
-        # add Matlab library path if $MATLAB_HOME is set
-        if os.environ.get("MATLAB_HOME"):
-            if platform.system() == "Darwin":
-                myenv[libpath] += os.environ["MATLAB_HOME"] + "/bin/maci64:"
-            #else:
-                #myenv[libpath] += os.environ["MATLAB_HOME"] + "/bin/glnxa64:"
-
-        myenv[libpath] += "/usr/local/cuda/lib64:"
-        myenv[libpath] += "/opt/intel/mkl/lib/intel64:"
-        myenv[libpath] += "/opt/intel/lib/intel64:"
-        myenv[libpath] += "/usr/local/lib:"
-
-        if os.environ.get(libpath):
-            myenv[libpath] += os.environ[libpath]
-
-        if os.environ.get("USER"):
-            myenv["USER"] = os.environ["USER"]
-
-        if os.environ.get("HOME"):
-            myenv["HOME"] = os.environ["HOME"]
-
-        myenv["PATH"] = myenv["ISMRMRD_HOME"] + "/bin:"
-        myenv["PATH"] += myenv["GADGETRON_HOME"] + "/bin:"
-        if os.environ.get("MATLAB_HOME"):
-            myenv["PATH"] += os.environ["MATLAB_HOME"] + "/bin:"
-        myenv["PATH"] += "/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
-
-    myenv["ACE_DEBUG"] = "1"
-    #myenv["GADGETRON_LOG_MASK"] = "ALL"
-
-    if platform.system() == "Windows":
-        os.putenv('PATH', myenv['PATH'])
-
-    print("Running Gadgetron test with: ")
-    print("  -- ISMRMRD_HOME  : " + myenv["ISMRMRD_HOME"])
-    print("  -- GADGETRON_HOME  : " + myenv["GADGETRON_HOME"])
-    print("  -- PATH            : " + myenv["PATH"])
-    print("  -- " + libpath + " : " + myenv[libpath])
-    print("  -- TEST CASE       : " + test_case)
-
-    if (args.external):
-        test_result = run_test(myenv, test_case, host, port, start_gadgetron=False)
-    else:
-        test_result = run_test(myenv, test_case, host, port, start_gadgetron=True)
-
-    if test_result:
-        print("TEST: " + test_case + " SUCCESS")
-        return 0
-    else:
-        print("TEST: " + test_case + " FAILED")
-        return -100
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -6,6 +6,8 @@
 #ifndef hoImageRegDeformationFieldRegister_H_
 #define hoImageRegDeformationFieldRegister_H_
 
+#pragma once
+
 #include "hoImageRegNonParametricRegister.h"
 
 namespace Gadgetron {
@@ -29,7 +31,7 @@ namespace Gadgetron {
         typedef typename BaseClass::Target3DType Target3DType;
         typedef typename BaseClass::Source3DType Source3DType;
 
-        typedef hoNDImage<float, D> DeformFieldType;
+        typedef hoNDImage<CoordType, D> DeformFieldType;
 
         typedef ValueType T;
         typedef ValueType element_type;
@@ -137,6 +139,12 @@ namespace Gadgetron {
         /// if regularization_hilbert_strength_world_coordinate_=false, this strength is in the unit of pixel
         bool regularization_hilbert_strength_world_coordinate_;
         std::vector< std::vector<ValueType> > regularization_hilbert_strength_pyramid_level_;
+
+        /// in-FOV constraint
+        bool apply_in_FOV_constraint_;
+
+        /// divergence free constraint
+        bool apply_divergence_free_constraint_;
 
         /// verbose mode
         bool verbose_;
@@ -263,6 +271,9 @@ namespace Gadgetron {
             regularization_hilbert_strength_pyramid_level_[ii].resize(D, 12.0);
         }
 
+        apply_in_FOV_constraint_ = false;
+        apply_divergence_free_constraint_ = false;
+
         verbose_ = false;
 
         return true;
@@ -330,6 +341,9 @@ namespace Gadgetron {
                 solver_pyramid_[ii].setInterpolator(*source_interp_warper_[ii]);
                 solver_pyramid_[ii].setBackgroundValue(bg_value_);
                 solver_pyramid_[ii].setUseWorldCoordinate(use_world_coordinates_);
+
+                solver_pyramid_[ii].apply_in_FOV_constraint_ = apply_in_FOV_constraint_;
+                solver_pyramid_[ii].apply_divergence_free_constraint_ = apply_divergence_free_constraint_;
             }
 
             // downsample the deformation field if necessary
@@ -552,6 +566,10 @@ namespace Gadgetron {
             } 
             os << " ] " << std::endl;
         }
+        os << "------------" << std::endl;
+        os << "Apply in FOV constraint is : " << apply_in_FOV_constraint_ << std::endl;
+        os << "Apply divergence free constraint is : " << apply_divergence_free_constraint_ << std::endl;
+
         os << "------------" << std::endl;
         os << "Verbose mode is : " << verbose_ << std::endl;
     }

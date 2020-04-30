@@ -14,10 +14,6 @@ namespace Gadgetron {
     class EXPORTGADGETSMRICORE GenericReconCartesianGrappaObj
     {
     public:
-
-        GenericReconCartesianGrappaObj() {}
-        virtual ~GenericReconCartesianGrappaObj() {}
-
         // ------------------------------------
         /// recon outputs
         // ------------------------------------
@@ -63,7 +59,7 @@ namespace Gadgetron {
         typedef Gadgetron::GenericReconCartesianGrappaObj< std::complex<float> > ReconObjType;
 
         GenericReconCartesianGrappaGadget();
-        ~GenericReconCartesianGrappaGadget();
+        ~GenericReconCartesianGrappaGadget() override;
 
         /// ------------------------------------------------------------------------------------
         /// parameters to control the reconstruction
@@ -121,5 +117,6 @@ namespace Gadgetron {
 
         // compute snr map
         virtual void compute_snr_map(ReconObjType& recon_obj, hoNDArray< std::complex<float> >& snr_map);
+
     };
 }

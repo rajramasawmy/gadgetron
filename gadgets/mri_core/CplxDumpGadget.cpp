@@ -53,13 +53,13 @@ namespace Gadgetron{
     // Allocate array for result
     //
 
-    hoNDArray< std::complex<float> > result( &dims );
+    hoNDArray< std::complex<float> > result( dims );
 
     // And copy over the first profile
     //
 
     {
-      hoNDArray< std::complex<float> > tmp( &dims_profile, result.get_data_ptr() );
+      hoNDArray< std::complex<float> > tmp( dims_profile, result.get_data_ptr() );
       tmp = *entry;
     }
 
@@ -91,8 +91,8 @@ namespace Gadgetron{
     // Reshape to get the coil dimension as the last
     //
   
-    std::vector<size_t> order; order.push_back(0); order.push_back(2); order.push_back(1);
-    result = *permute( &result, &order);
+    std::vector<size_t> order= {0, 2, 1};
+    result = permute( result, order);
 
     // Write out the result
     //

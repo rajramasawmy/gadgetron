@@ -22,6 +22,8 @@
 
 #include "ImageIOAnalyze.h"
 
+#include "gadgetron_sha1.h"
+
 namespace Gadgetron {
 
     template <typename T> 
@@ -71,6 +73,17 @@ namespace Gadgetron {
         // --------------------------------------------------
         virtual int process_config(ACE_Message_Block* mb);
         virtual int process(GadgetContainerMessage<T>* m1);
+    };
+
+    class EXPORTGADGETSMRICORE GenericReconKSpaceReadoutBase :public GenericReconBase < ISMRMRD::AcquisitionHeader >
+    {
+    public:
+        GADGET_DECLARE(GenericReconKSpaceReadoutBase);
+
+        typedef GenericReconBase < ISMRMRD::AcquisitionHeader > BaseClass;
+
+        GenericReconKSpaceReadoutBase();
+        virtual ~GenericReconKSpaceReadoutBase();
     };
 
     class EXPORTGADGETSMRICORE GenericReconDataBase :public GenericReconBase < IsmrmrdReconData >

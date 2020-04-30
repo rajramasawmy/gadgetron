@@ -7,6 +7,7 @@ if (MATLAB_FOUND)
     set(CMAKE_DEBUG_POSTFIX)
 
     include_directories( 
+        ${CMAKE_BINARY_DIR}/toolboxes/core
         ${CMAKE_SOURCE_DIR}/toolboxes/fft/cpu
         ${CMAKE_SOURCE_DIR}/toolboxes/klt/cpu
         ${CMAKE_SOURCE_DIR}/toolboxes/mri_core
@@ -18,15 +19,20 @@ if (MATLAB_FOUND)
     )
 
     link_directories(${Boost_LIBRARY_DIRS})
-    link_libraries(${MATLAB_LIBRARIES} 
-                    optimized ${ACE_LIBRARIES} debug ${ACE_DEBUG_LIBRARY} 
-                    ${ISMRMRD_LIBRARIES} 
+    link_libraries(${MATLAB_LIBRARIES}
+                    ${ISMRMRD_LIBRARIES}
+                    ${FFTW3_LIBRARIES}
+                    ${Boost_LIBRARIES}
+                    ${ARMADILLO_LIBRARIES}
                     gadgetron_toolbox_matlab 
-                    gadgetron_toolbox_image_analyze_io 
                     gadgetron_toolbox_cpucore 
                     gadgetron_toolbox_cpucore_math
                     gadgetron_toolbox_mri_core
-                    gadgetron_toolbox_cpureg )
+                    gadgetron_toolbox_cpureg 
+                    gadgetron_toolbox_cpufft 
+                    gadgetron_toolbox_cpuklt 
+                    gadgetron_toolbox_cpuoperator 
+                    gadgetron_toolbox_log )
 
     if (WIN32)
         if ( HAS_64_BIT )
@@ -52,17 +58,13 @@ if (MATLAB_FOUND)
         endif ()
     endif()
 
-    if ( MKL_FOUND AND FFTW3_FOUND )
+    add_library(Matlab_gt_read_analyze SHARED Matlab_gt_read_analyze.cpp)
+    set_target_properties(Matlab_gt_read_analyze PROPERTIES SUFFIX ${MATLAB_SUFFIX} PREFIX "")
+    install(TARGETS Matlab_gt_read_analyze DESTINATION ${GADGETRON_INSTALL_MATLAB_PATH} COMPONENT main)
 
-        add_library(Matlab_gt_read_analyze SHARED Matlab_gt_read_analyze.cpp)
-        set_target_properties(Matlab_gt_read_analyze PROPERTIES SUFFIX ${MATLAB_SUFFIX})
-        install(TARGETS Matlab_gt_read_analyze DESTINATION ${GADGETRON_INSTALL_MATLAB_PATH} COMPONENT main)
-
-        add_library(Matlab_gt_write_analyze SHARED Matlab_gt_write_analyze.cpp)
-        set_target_properties(Matlab_gt_write_analyze PROPERTIES SUFFIX ${MATLAB_SUFFIX})
-        install(TARGETS Matlab_gt_write_analyze DESTINATION ${GADGETRON_INSTALL_MATLAB_PATH} COMPONENT main)
-
-    endif ()
+    add_library(Matlab_gt_write_analyze SHARED Matlab_gt_write_analyze.cpp)
+    set_target_properties(Matlab_gt_write_analyze PROPERTIES SUFFIX ${MATLAB_SUFFIX} PREFIX "")
+    install(TARGETS Matlab_gt_write_analyze DESTINATION ${GADGETRON_INSTALL_MATLAB_PATH} COMPONENT main)
 
 else()
     message("MATLAB NOT FOUND: matlab wrapper for gtplus toolbox will not be compiled.")

@@ -1,8 +1,4 @@
-include_directories(
-  ${Boost_INCLUDE_DIR}
-  ${CMAKE_SOURCE_DIR}/toolboxes/core
-  ${CMAKE_SOURCE_DIR}/toolboxes/core/cpu
-  )
+
 
 set(operator_header_files 
     ${CMAKE_SOURCE_DIR}/toolboxes/operators/generalOperator.h
@@ -27,10 +23,18 @@ set(operator_header_files
 install(FILES ${operator_header_files}
   DESTINATION ${GADGETRON_INSTALL_INCLUDE_PATH} COMPONENT main)
 
-if (ARMADILLO_FOUND)
-  add_subdirectory(cpu)
-endif ()
+add_library(gadgetron_toolbox_operator INTERFACE)
+target_include_directories(gadgetron_toolbox_operator
+        INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+
+install(TARGETS gadgetron_toolbox_operator
+        EXPORT gadgetron-export)
+
+add_subdirectory(cpu)
 
 if (CUDA_FOUND)
   add_subdirectory(gpu)
 endif ()
+
+set(GADGETRON_BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR};${GADGETRON_BUILD_RPATH}" PARENT_SCOPE)

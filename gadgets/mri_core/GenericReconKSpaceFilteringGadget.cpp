@@ -194,7 +194,7 @@ namespace Gadgetron {
 
                     hoNDArray< std::complex<float> > f;
                     Gadgetron::generate_symmetric_filter(len, f, Gadgetron::get_kspace_filter_type(filterRO.value()), filterRO_sigma.value(), (size_t)std::ceil(filterRO_width.value()*len));
-                    Gadgetron::pad(RO, &f, &filter_RO_[encoding]);
+                    Gadgetron::pad(RO, f, filter_RO_[encoding]);
                 }
             }
 
@@ -239,7 +239,7 @@ namespace Gadgetron {
 
                     hoNDArray< std::complex<float> > f;
                     Gadgetron::generate_symmetric_filter(len, f, Gadgetron::get_kspace_filter_type(filterE1.value()), filterE1_sigma.value(), (size_t)std::ceil(filterE1_width.value()*len));
-                    Gadgetron::pad(E1, &f, &filter_E1_[encoding]);
+                    Gadgetron::pad(E1, f, filter_E1_[encoding]);
                 }
             }
 
@@ -284,7 +284,7 @@ namespace Gadgetron {
 
                     hoNDArray< std::complex<float> > f;
                     Gadgetron::generate_symmetric_filter(len, f, Gadgetron::get_kspace_filter_type(filterE2.value()), filterE2_sigma.value(), (size_t)std::ceil(filterE2_width.value()*len));
-                    Gadgetron::pad(E2, &f, &filter_E2_[encoding]);
+                    Gadgetron::pad(E2, f, filter_E2_[encoding]);
                 }
             }
 
@@ -449,18 +449,6 @@ namespace Gadgetron {
         if (r > len) r = len;
     }
 
-    int GenericReconKSpaceFilteringGadget::close(unsigned long flags)
-    {
-        GDEBUG_CONDITION_STREAM(true, "GenericReconKSpaceFilteringGadget - close(flags) : " << flags);
-
-        if (BaseClass::close(flags) != GADGET_OK) return GADGET_FAIL;
-
-        if (flags != 0)
-        {
-        }
-
-        return GADGET_OK;
-    }
 
     // ----------------------------------------------------------------------------------------
 

@@ -7,6 +7,16 @@ ImageArraySplitGadget::ImageArraySplitGadget()
 
 }
 
+int ImageArraySplitGadget::process(GadgetContainerMessage<ISMRMRD::ImageHeader>* m1)
+{
+    if (this->next()->putq(m1) < 0)
+    {
+        m1->release();
+        return GADGET_FAIL;
+    }
+
+    return GADGET_OK;
+}
 
 int ImageArraySplitGadget::process( GadgetContainerMessage<IsmrmrdImageArray>* m1)
 {
@@ -45,7 +55,7 @@ int ImageArraySplitGadget::process( GadgetContainerMessage<IsmrmrdImageArray>* m
                 GadgetContainerMessage< hoNDArray< std::complex<float> > >* cm2 = 
                         new GadgetContainerMessage<hoNDArray< std::complex<float> > >();
 
-                try{cm2->getObjectPtr()->create(&img_dims);}
+                try{cm2->getObjectPtr()->create(img_dims);}
                 catch (std::runtime_error &err){
                     GEXCEPTION(err,"Unable to allocate new image\n");
                     cm1->release();
