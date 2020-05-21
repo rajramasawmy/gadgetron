@@ -136,8 +136,29 @@ template<template<class> class ARRAY> 	int GriddingReconGadgetBase<ARRAY>::proce
 
 			NonCartesian::append_image_header(imarray,recon_bit_->rbit_[e], e);
 			this->prepare_image_array(imarray, e, ((int)e + 1), GADGETRON_IMAGE_REGULAR);
-			
 
+			// ###AJ Patch for images
+			GadgetContainerMessage<Gadgetron::IsmrmrdImageArray> *m4 = new GadgetContainerMessage<Gadgetron::IsmrmrdImageArray>();
+			*(m4->getObjectPtr()) = imarray;
+
+			GadgetContainerMessage<ISMRMRD::ImageHeader> *m3 = new GadgetContainerMessage<ISMRMRD::ImageHeader>;
+			*(m3->getObjectPtr()) = m4->getObjectPtr()->headers_[0];
+			// m3->cont(m4); Shouldnt this add to the que m4 as well
+
+			if (this->next()->putq(m3) < 0)
+			{
+				GDEBUG("Failed to put job on queue. Stupid Griding Recon\n");
+				m3->release();
+				return GADGET_FAIL;
+			}
+
+			if (this->next()->putq(m4) < 0)
+			{
+				GDEBUG("Failed to put job on queue. Stupid Griding Recon\n");
+				m4->release();
+				return GADGET_FAIL;
+			}
+			// << AJ patch
 			//Is this where we measure SNR?
 			if (replicas.value() > 0 && snr_frame.value() == process_called_times) {
 
