@@ -28,6 +28,8 @@ namespace Gadgetron {
 
 
         trajectory_parameters = Spiral::TrajectoryParameters(h);
+        trajectory_parameters.spiral_rotations_ = spiral_rotations.value();
+        trajectory_parameters.vds_factor_ = vds_factor.value();
 
 
         return GADGET_OK;

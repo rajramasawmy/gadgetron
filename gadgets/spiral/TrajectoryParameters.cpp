@@ -12,17 +12,27 @@ namespace Gadgetron {
 
         std::pair<hoNDArray<floatd2>, hoNDArray<float>>
         TrajectoryParameters::calculate_trajectories_and_weight(const ISMRMRD::AcquisitionHeader &acq_header) {
-            int nfov = 1;         /*  number of fov coefficients.             */
+            //int nfov = 1;         /*  number of fov coefficients.             */
+            // Two-fov percentage definition for variable density design
+            int nfov = 2;
+            double fov_vds_[nfov]; 
+            fov_vds_[0] = fov_;
+            fov_vds_[1] = -1*fov_*(1.0/krmax_)*(1.0 - 1.0*(vds_factor_/100.0));
+
             int ngmax = 1e5;       /*  maximum number of gradient samples      */
             double sample_time = (1.0 * Tsamp_ns_) * 1e-9;
 
-
-            auto base_gradients = calculate_vds(smax_,gmax_,sample_time,sample_time,Nints_,&fov_,nfov,krmax_,ngmax,acq_header.number_of_samples);
+            //auto base_gradients = calculate_vds(smax_, gmax_, sample_time, sample_time, Nints_, &fov_, nfov, krmax_, ngmax, acq_header.number_of_samples);
+            auto base_gradients = calculate_vds(smax_,gmax_,sample_time,sample_time,Nints_,&fov_vds_[0],nfov,krmax_,ngmax,acq_header.number_of_samples);
             int samples_per_interleave_ = base_gradients.get_number_of_elements();
 
             GDEBUG("Using %d samples per interleave\n", samples_per_interleave_);
 
-            base_gradients = create_rotations(base_gradients,Nints_);
+            if (spiral_rotations_ == 0) {
+                base_gradients = create_rotations(base_gradients,Nints_);
+            } else {
+                base_gradients = create_rotations(base_gradients,spiral_rotations_);
+            }
 
             auto trajectories = calculate_trajectories(base_gradients,sample_time,krmax_);
 

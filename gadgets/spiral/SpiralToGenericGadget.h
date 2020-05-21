@@ -33,6 +33,9 @@ namespace Gadgetron {
         virtual int process(GadgetContainerMessage<ISMRMRD::AcquisitionHeader> *m1,
                             GadgetContainerMessage<hoNDArray<std::complex<float> > > *m2);
 
+        GADGET_PROPERTY(spiral_rotations, long, "Spiral rotations", 0);
+        GADGET_PROPERTY(vds_factor, double, "Percentage reduction 2-fov vds design", 100);  
+
     private:
 
         bool prepared_;
