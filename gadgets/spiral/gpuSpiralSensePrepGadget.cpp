@@ -154,7 +154,7 @@ namespace Gadgetron {
         trajectoryParameters.spiral_rotations_ = spiral_rots;
         //trajectoryParameters.spiral_rotations_ = spiral_rotations.value();
         trajectoryParameters.vds_factor_ = vds_factor.value();
-        sliding_window_width_ = sliding_window_width.value();
+        sliding_window_width_ = spiral_rots;//sliding_window_width.value();
         
         return GADGET_OK;
     }
