@@ -150,6 +150,12 @@ namespace Gadgetron {
 
         trajectoryParameters = Spiral::TrajectoryParameters(h);
 
+        long spiral_rots = (long)(1 + e_limits.kspace_encoding_step_1->maximum);
+        trajectoryParameters.spiral_rotations_ = spiral_rots;
+        //trajectoryParameters.spiral_rotations_ = spiral_rotations.value();
+        trajectoryParameters.vds_factor_ = vds_factor.value();
+        sliding_window_width_ = sliding_window_width.value();
+        
         return GADGET_OK;
     }
 
@@ -211,7 +217,9 @@ namespace Gadgetron {
         // Have we received sufficient data for a new frame?
         //
 
-        bool is_last_scan_in_slice = header.isFlagSet(ISMRMRD::ISMRMRD_ACQ_LAST_IN_SLICE);
+        //bool is_last_scan_in_slice = header.isFlagSet(ISMRMRD::ISMRMRD_ACQ_LAST_IN_SLICE);
+        // sliding window version 
+        bool is_last_scan_in_slice = (sliding_window_width_ == interleaves_counter_singleframe_[0]);
 
         if (is_last_scan_in_slice) {
 

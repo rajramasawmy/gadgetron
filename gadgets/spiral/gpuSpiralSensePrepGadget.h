@@ -43,6 +43,11 @@ namespace Gadgetron {
         GADGET_PROPERTY(reconstruction_os_factor_x, float, "Oversampling for reconstruction in x-direction", 1.0);
         GADGET_PROPERTY(reconstruction_os_factor_y, float, "Oversampling for reconstruction in y-direction", 1.0);
 
+        GADGET_PROPERTY(spiral_rotations, long, "Spiral rotations", 0);
+        GADGET_PROPERTY(vds_factor, double, "Percentage reduction 2-fov vds design", 100);  
+        GADGET_PROPERTY(csm_frames, short, "One time CSM at start", 0);  
+        GADGET_PROPERTY(sliding_window_width, long, "One time CSM at start", 0);  
+ 
         virtual int process_config(ACE_Message_Block *mb);
 
         virtual int process(GadgetContainerMessage<ISMRMRD::AcquisitionHeader> *m1,
@@ -75,7 +80,9 @@ namespace Gadgetron {
 
         float kernel_width_;
         float oversampling_factor_;
-
+        
+        // RR hacks
+        long sliding_window_width_; 
 
         hoNDArray<floatd2> host_traj_;
         hoNDArray<float> host_weights_;

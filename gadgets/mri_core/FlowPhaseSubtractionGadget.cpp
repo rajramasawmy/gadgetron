@@ -55,7 +55,7 @@ namespace Gadgetron{
     // We need two sets to make a phase subtraction
     if (sets_ < 2) {
       if (this->next()->putq(m1) < 0) {
-	return GADGET_FAIL;
+	      return GADGET_FAIL;
       }
       return GADGET_OK;
     }

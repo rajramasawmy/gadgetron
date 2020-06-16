@@ -28,7 +28,9 @@ namespace Gadgetron {
 
 
         trajectory_parameters = Spiral::TrajectoryParameters(h);
-        trajectory_parameters.spiral_rotations_ = spiral_rotations.value();
+        long spiral_rots = (long)(1 +h.encoding[0].encodingLimits.kspace_encoding_step_1->maximum);
+        trajectory_parameters.spiral_rotations_ = spiral_rots;
+        //trajectory_parameters.spiral_rotations_ = spiral_rotations.value();
         trajectory_parameters.vds_factor_ = vds_factor.value();
 
 
